@@ -24,10 +24,7 @@ const LoginPage: React.FC = () => {
           </div>
           <button type="submit" className="btn btn-primary w-100">Login</button>
         </form>
-        <div className="text-center mt-3">
-          <span>Don't have an account? </span>
-          <a href="#" className="text-primary">Sign up</a>
-        </div>
+        
       </div>
     </div>
   );
