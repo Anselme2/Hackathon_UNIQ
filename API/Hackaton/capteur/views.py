@@ -6,6 +6,7 @@ import json
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from .models import DonneeCapteur  # Importation de ton modèle
 
 # Charger la clé privée depuis le dossier 'keys' dans la racine du projet
 private_key_path = os.path.join(settings.BASE_DIR, 'keys', 'private_key.pem')
@@ -33,8 +34,20 @@ def recevoir_donnees(request):
 
             capteur_data = json.loads(decrypted_data.decode())
             print("✅ Données reçues :", capteur_data)
-            return JsonResponse({"message": "Données reçues avec succès", "data": capteur_data})
-        
+
+            # Assurer que les données nécessaires sont présentes dans 'capteur_data'
+            if 'bpm' in capteur_data and 'spo2' in capteur_data:
+                # Créer une nouvelle instance du modèle et enregistrer dans la base de données
+                donnee = DonneeCapteur.objects.create(
+                    bpm=capteur_data['bpm'],
+                    spo2=capteur_data['spo2']
+                )
+                donnee.save()
+
+                return JsonResponse({"message": "Données reçues et enregistrées avec succès", "data": capteur_data})
+            else:
+                return JsonResponse({"error": "Les données du capteur sont incomplètes"}, status=400)
+
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=400)
 
