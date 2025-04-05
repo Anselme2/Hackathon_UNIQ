@@ -1,54 +1,58 @@
 import os
+import base64
+import json
 from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-import json
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
-from .models import DonneeCapteur  # Importation de ton modèle
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding as sym_padding
+from .models import DonneeCapteur  # Ton modèle
 
-# Charger la clé privée depuis le dossier 'keys' dans la racine du projet
-private_key_path = os.path.join(settings.BASE_DIR, 'keys', 'private_key.pem')
-
-with open(private_key_path, "rb") as f:
-    PRIVATE_KEY = load_pem_private_key(f.read(), password=None)
+# Clé AES partagée avec le client (16, 24 ou 32 octets)
+AES_KEY = b'TaCleSecrete1234'  # doit correspondre exactement à la clé utilisée côté client
 
 @csrf_exempt
 def recevoir_donnees(request):
-    """Déchiffre et affiche les données du capteur"""
+    """Déchiffre les données AES envoyées par le capteur et les enregistre."""
     if request.method == "POST":
         try:
-            data = json.loads(request.body)
-            encrypted_data = bytes.fromhex(data["data"])  # Convertir en bytes
-            
-            # Déchiffrement RSA
-            decrypted_data = PRIVATE_KEY.decrypt(
-                encrypted_data,
-                padding.OAEP(
-                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                    algorithm=hashes.SHA256(),
-                    label=None
-                )
-            )
+            # Récupérer les données chiffrées envoyées par le client
+            body = json.loads(request.body)
+            encrypted_b64 = body.get("data")
 
-            capteur_data = json.loads(decrypted_data.decode())
+            if not encrypted_b64:
+                return JsonResponse({"error": "Données manquantes"}, status=400)
+
+            encrypted_data = base64.b64decode(encrypted_b64)
+
+            # Séparer IV et ciphertext
+            iv = encrypted_data[:16]
+            ciphertext = encrypted_data[16:]
+
+            # Déchiffrement AES CBC
+            cipher = Cipher(algorithms.AES(AES_KEY), modes.CBC(iv))
+            decryptor = cipher.decryptor()
+            padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+
+            # Suppression du padding
+            unpadder = sym_padding.PKCS7(128).unpadder()
+            plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
+
+            capteur_data = json.loads(plaintext.decode())
             print("✅ Données reçues :", capteur_data)
 
-            # Assurer que les données nécessaires sont présentes dans 'capteur_data'
+            # Enregistrement si données valides
             if 'bpm' in capteur_data and 'spo2' in capteur_data:
-                # Créer une nouvelle instance du modèle et enregistrer dans la base de données
-                donnee = DonneeCapteur.objects.create(
+                DonneeCapteur.objects.create(
                     bpm=capteur_data['bpm'],
                     spo2=capteur_data['spo2']
                 )
-                donnee.save()
-
-                return JsonResponse({"message": "Données reçues et enregistrées avec succès", "data": capteur_data})
+                return JsonResponse({"message": "Données enregistrées", "data": capteur_data})
             else:
-                return JsonResponse({"error": "Les données du capteur sont incomplètes"}, status=400)
+                return JsonResponse({"error": "Données incomplètes"}, status=400)
 
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=400)
 
     return JsonResponse({"message": "Méthode non autorisée"}, status=405)
+
